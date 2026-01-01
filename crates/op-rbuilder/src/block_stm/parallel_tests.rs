@@ -6,8 +6,7 @@
 use super::*;
 use crate::block_stm::mv_hashmap::{ReadSet, WriteSet};
 use crate::block_stm::types::{
-    BlockResourceType, EvmStateKey, EvmStateValue, ExecutionStatus, Incarnation, ReadResult, Task,
-    TxnIndex, Version,
+    BlockResourceType, EvmStateKey, EvmStateValue, ReadResult, Task, Version,
 };
 use alloy_primitives::{Address, U256};
 use rand::prelude::*;
