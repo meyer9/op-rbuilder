@@ -146,17 +146,17 @@ impl AddressGasLimiterInner {
             .map(|entry| entry.value().clone())
             .unwrap_or_else(|| TokenBucket::new(self.config.max_gas_per_address));
 
-        // Check if cumulative + additional would exceed the capacity
-        // The gas already consumed is (capacity - available)
-        // The total gas that would be used is: cumulative_gas + additional_gas
-        // We need to check if total would exceed capacity
+        // Check if cumulative gas used in this block + additional gas would exceed available
+        // cumulative_gas = gas already used by this address in current block (from AddressGasUsed)
+        // bucket.available = gas remaining in token bucket (from start of block)
+        // We need to check if cumulative_gas + additional_gas <= bucket.available
         let total_gas_needed = cumulative_gas.saturating_add(additional_gas);
 
-        let result = if total_gas_needed > bucket.capacity {
+        let result = if total_gas_needed > bucket.available {
             Err(GasLimitError::AddressLimitExceeded {
                 address,
                 requested: total_gas_needed,
-                available: bucket.capacity,
+                available: bucket.available,
             })
         } else {
             Ok(false)
