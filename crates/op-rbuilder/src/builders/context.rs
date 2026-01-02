@@ -864,7 +864,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
                         && previous_result.map(|r| r.result.is_some()).unwrap_or(false);
 
                     if !conflicting_keys.is_empty() {
-                        trace!(
+                        info!(
                             target: "payload_builder",
                             conflict_keys_count = conflicting_keys.len(),
                             resource_only = conflicts_are_resource_only,
@@ -876,7 +876,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
 
                     // 3. Execute or reuse
                     let (result, evm_state) = if can_skip_evm {
-                        trace!(target: "payload_builder", "Skipping EVM re-execution (resource-only conflict)");
+                        info!(target: "payload_builder", "Skipping EVM re-execution (resource-only conflict)");
                         // Reuse previous result - extract just the loaded_state, not the full StateWithIncrements
                         let prev = previous_result.unwrap();
                         (prev.result.clone().unwrap(), prev.state.loaded_state.clone())
