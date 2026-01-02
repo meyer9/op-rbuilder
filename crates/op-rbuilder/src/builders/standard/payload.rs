@@ -101,8 +101,10 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
         pool: Pool,
         attr: BestTransactionsAttributes,
     ) -> impl PayloadTransactions<Transaction = T> {
-        // TODO: once this issue is fixed we could remove without_updates and rely on regular impl
-        // https://github.com/paradigmxyz/reth/issues/17325
+        // Use `.without_updates()` to prevent the iterator from blocking on pool updates.
+        // The parallel execution path limits transaction collection to prevent infinite draining.
+        // See: context.rs execute_best_transactions_parallel for the collection limit logic
+        // Related: https://github.com/paradigmxyz/reth/issues/17325
         BestPayloadTransactions::new(
             pool.best_transactions_with_attributes(attr)
                 .without_updates(),

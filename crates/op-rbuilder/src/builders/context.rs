@@ -764,12 +764,31 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
 
         // Collect candidate transactions from the iterator.
         // Also extract reverted_hashes for bundle revert protection before losing the wrapper type
-        let mut candidate_txs = Vec::new();
-        let mut tx_reverted_hashes = Vec::new();
-        while let Some(tx) = best_txs.next(()) {
-            let reverted_hashes = tx.reverted_hashes();
-            tx_reverted_hashes.push(reverted_hashes);
-            candidate_txs.push(tx);
+        //
+        // IMPORTANT: The iterator from best_transactions_with_attributes().without_updates()
+        // can hang when trying to drain all transactions. Limit collection to a reasonable
+        // maximum to prevent indefinite blocking.
+        // See: https://github.com/paradigmxyz/reth/issues/17325
+        const MIN_TX_GAS: u64 = 21000; // Minimum gas for a transaction
+
+        // Limit to at most the number of transactions that could fit in the block
+        // with an absolute cap to prevent excessive collection
+        let max_txs_to_collect = (block_gas_limit / MIN_TX_GAS).min(1000) as usize;
+
+        let mut candidate_txs = Vec::with_capacity(max_txs_to_collect.min(100));
+        let mut tx_reverted_hashes = Vec::with_capacity(max_txs_to_collect.min(100));
+
+        for _ in 0..max_txs_to_collect {
+            match best_txs.next(()) {
+                Some(tx) => {
+                    let reverted_hashes = tx.reverted_hashes();
+                    tx_reverted_hashes.push(reverted_hashes);
+                    candidate_txs.push(tx);
+                }
+                None => {
+                    break;
+                }
+            }
         }
 
         let num_candidates = candidate_txs.len();
