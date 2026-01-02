@@ -43,7 +43,7 @@ use revm::{
 };
 use std::{convert::Infallible, sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, debug, info, trace};
+use tracing::{Span, debug, info, trace, warn};
 
 use crate::{
     block_stm::{evm::OpLazyEvmFactory, executor::Executor, db_adapter::VersionedDbError},

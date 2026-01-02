@@ -159,12 +159,12 @@ impl AddressGasLimiterInner {
                 available: bucket.capacity,
             })
         } else {
-            Ok(())
+            Ok(false)
         };
 
-        self.metrics.record_gas_check(&result.as_ref().map(|_| false), start.elapsed());
+        self.metrics.record_gas_check(&result, start.elapsed());
 
-        result
+        result.map(|_| ())
     }
 
     fn refresh_inner(&self, block_number: u64) -> usize {
