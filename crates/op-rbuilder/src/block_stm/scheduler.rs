@@ -224,23 +224,28 @@ impl Scheduler {
 
     pub fn finish_validation(&self, txn_idx: TxnIndex, aborted: bool) -> Option<Task> {
         if aborted {
-            self.set_ready_status(txn_idx);
             self.decrease_validation_idx((txn_idx + 1) as usize);
+
+            // Atomically increment incarnation and check if we should re-execute
+            // We must do this atomically to prevent race conditions with try_incarnate
+            let mut status = self.txn_status[txn_idx as usize].lock().unwrap();
+            status.0 = status.0 + 1;  // Increment incarnation
+            let incarnation = status.0;
+
+            // Check if we can re-execute directly
             if self.execution_idx.load(Ordering::SeqCst) > txn_idx as usize {
-                // Check if we can re-execute directly. We already set status to ReadyToExecute above.
-                // We need to atomically check and update the status WITHOUT calling try_incarnate
-                // because try_incarnate expects a prior increment which we don't have here.
-                let mut status = self.txn_status[txn_idx as usize].lock().unwrap();
-                if status.1 == ExecutionStatus::ReadyToExecute {
-                    status.1 = ExecutionStatus::Executing;
-                    let incarnation = status.0;
-                    drop(status);  // Release lock
-                    // Return execute task without decrementing - counter "transfers" to new task
-                    return Some(Task::Execute {
-                        version: Version::new(txn_idx, incarnation),
-                    });
-                }
-                // Status is not ReadyToExecute (another thread grabbed it), just decrement and return
+                // Set to Executing immediately - don't set to ReadyToExecute first!
+                // This prevents try_incarnate from claiming the same task
+                status.1 = ExecutionStatus::Executing;
+                drop(status);  // Release lock
+                // Return execute task without decrementing - counter "transfers" to new task
+                return Some(Task::Execute {
+                    version: Version::new(txn_idx, incarnation),
+                });
+            } else {
+                // Can't re-execute yet, set to ReadyToExecute for later
+                status.1 = ExecutionStatus::ReadyToExecute;
+                drop(status);
             }
         }
         // Decrement for the validation task that finished
