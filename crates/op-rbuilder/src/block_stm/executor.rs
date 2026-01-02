@@ -18,7 +18,7 @@ use revm::{
     state::{Account, EvmState},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, debug, warn};
+use tracing::{Span, debug, info, warn};
 
 use crate::{
     block_stm::{
@@ -463,6 +463,15 @@ impl<
 
                             let wrote_new_path = this.mv_hashmap.record(version, &read_set, &write_set);
 
+                            info!(
+                                target: "block_stm",
+                                worker_id = worker_id,
+                                txn_idx = txn_idx,
+                                incarnation = incarnation,
+                                wrote_new_path = wrote_new_path,
+                                "Recorded execution result"
+                            );
+
                             let next_task = this
                                 .scheduler
                                 .finish_execution(txn_idx, incarnation, wrote_new_path);
@@ -544,6 +553,25 @@ impl<
                             // Get next task from Block-STM scheduler
                             task = this.scheduler.next_task();
                             if task.is_none() {
+                                if this.scheduler.done() {
+                                    info!(
+                                        target: "block_stm",
+                                        worker_id = worker_id,
+                                        "Scheduler done, worker exiting"
+                                    );
+                                } else {
+                                    // Only log every 1000th iteration to avoid spam
+                                    static YIELD_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                                    let count = YIELD_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    if count % 1000 == 0 {
+                                        info!(
+                                            target: "block_stm",
+                                            worker_id = worker_id,
+                                            yield_count = count,
+                                            "Worker yielding, no tasks available"
+                                        );
+                                    }
+                                }
                                 std::thread::yield_now();
                             }
                         }
