@@ -5,6 +5,7 @@ use crate::block_stm::{
     types::{Incarnation, TxnIndex},
 };
 use std::{collections::HashSet, sync::Mutex};
+use tracing::info;
 
 pub struct Scheduler {
     execution_idx: AtomicUsize,
@@ -67,8 +68,16 @@ impl Scheduler {
 
     fn decrease_validation_idx(&self, target_idx: usize) {
         // set to min of target_idx and current validation_idx
-        self.validation_idx.fetch_min(target_idx, Ordering::SeqCst);
+        let old_val = self.validation_idx.fetch_min(target_idx, Ordering::SeqCst);
+        let new_val = self.validation_idx.load(Ordering::SeqCst);
         self.decrease_cnt.fetch_add(1, Ordering::SeqCst);
+        info!(
+            target: "block_stm",
+            target_idx = target_idx,
+            old_validation_idx = old_val,
+            new_validation_idx = new_val,
+            "decrease_validation_idx called"
+        );
     }
 
     fn check_done(&self) {
@@ -107,7 +116,14 @@ impl Scheduler {
     }
 
     fn next_version_to_validate(&self) -> Option<(TxnIndex, Incarnation)> {
-        if self.validation_idx.load(Ordering::SeqCst) >= self.num_txns as usize {
+        let current_validation_idx = self.validation_idx.load(Ordering::SeqCst);
+        if current_validation_idx >= self.num_txns as usize {
+            info!(
+                target: "block_stm",
+                validation_idx = current_validation_idx,
+                num_txns = self.num_txns,
+                "next_version_to_validate: validation_idx >= num_txns, returning None"
+            );
             self.check_done();
             return None;
         }
@@ -115,10 +131,28 @@ impl Scheduler {
         let idx_to_validate = self.validation_idx.fetch_add(1, Ordering::SeqCst);
         if idx_to_validate < self.num_txns as usize {
             let (incarnation, status) = *self.txn_status[idx_to_validate as usize].lock().unwrap();
+            info!(
+                target: "block_stm",
+                idx_to_validate = idx_to_validate,
+                incarnation = incarnation,
+                status = ?status,
+                "next_version_to_validate: checking status"
+            );
             if status == ExecutionStatus::Executed {
+                info!(
+                    target: "block_stm",
+                    idx_to_validate = idx_to_validate,
+                    incarnation = incarnation,
+                    "next_version_to_validate: returning validation task"
+                );
                 return Some((idx_to_validate as TxnIndex, incarnation));
             }
         }
+        info!(
+            target: "block_stm",
+            idx_to_validate = idx_to_validate,
+            "next_version_to_validate: no valid task, returning None"
+        );
         self.num_active_tasks.fetch_sub(1, Ordering::SeqCst);
         None
     }
