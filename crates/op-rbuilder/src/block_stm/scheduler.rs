@@ -5,7 +5,6 @@ use crate::block_stm::{
     types::{Incarnation, TxnIndex},
 };
 use std::{collections::HashSet, sync::Mutex};
-use tracing::info;
 
 pub struct Scheduler {
     execution_idx: AtomicUsize,
@@ -68,16 +67,8 @@ impl Scheduler {
 
     fn decrease_validation_idx(&self, target_idx: usize) {
         // set to min of target_idx and current validation_idx
-        let old_val = self.validation_idx.fetch_min(target_idx, Ordering::SeqCst);
-        let new_val = self.validation_idx.load(Ordering::SeqCst);
+        self.validation_idx.fetch_min(target_idx, Ordering::SeqCst);
         self.decrease_cnt.fetch_add(1, Ordering::SeqCst);
-        info!(
-            target: "block_stm",
-            target_idx = target_idx,
-            old_validation_idx = old_val,
-            new_validation_idx = new_val,
-            "decrease_validation_idx called"
-        );
     }
 
     fn check_done(&self) {
@@ -98,9 +89,11 @@ impl Scheduler {
             let mut status = self.txn_status[txn_idx as usize].lock().unwrap();
             if status.1 == ExecutionStatus::ReadyToExecute {
                 status.1 = ExecutionStatus::Executing;
+                return Some((txn_idx, status.0));
             }
-            return Some((txn_idx, status.0));
+            // Status is not ReadyToExecute, fall through to decrement
         }
+        // Either txn_idx >= num_txns or status was not ReadyToExecute
         self.num_active_tasks.fetch_sub(1, Ordering::SeqCst);
         None
     }
@@ -118,12 +111,6 @@ impl Scheduler {
     fn next_version_to_validate(&self) -> Option<(TxnIndex, Incarnation)> {
         let current_validation_idx = self.validation_idx.load(Ordering::SeqCst);
         if current_validation_idx >= self.num_txns as usize {
-            info!(
-                target: "block_stm",
-                validation_idx = current_validation_idx,
-                num_txns = self.num_txns,
-                "next_version_to_validate: validation_idx >= num_txns, returning None"
-            );
             self.check_done();
             return None;
         }
@@ -131,34 +118,18 @@ impl Scheduler {
         let idx_to_validate = self.validation_idx.fetch_add(1, Ordering::SeqCst);
         if idx_to_validate < self.num_txns as usize {
             let (incarnation, status) = *self.txn_status[idx_to_validate as usize].lock().unwrap();
-            info!(
-                target: "block_stm",
-                idx_to_validate = idx_to_validate,
-                incarnation = incarnation,
-                status = ?status,
-                "next_version_to_validate: checking status"
-            );
             if status == ExecutionStatus::Executed {
-                info!(
-                    target: "block_stm",
-                    idx_to_validate = idx_to_validate,
-                    incarnation = incarnation,
-                    "next_version_to_validate: returning validation task"
-                );
                 return Some((idx_to_validate as TxnIndex, incarnation));
             }
         }
-        info!(
-            target: "block_stm",
-            idx_to_validate = idx_to_validate,
-            "next_version_to_validate: no valid task, returning None"
-        );
         self.num_active_tasks.fetch_sub(1, Ordering::SeqCst);
         None
     }
 
     pub fn next_task(&self) -> Option<Task> {
-        if self.validation_idx.load(Ordering::SeqCst) < self.execution_idx.load(Ordering::SeqCst) {
+        let val_idx = self.validation_idx.load(Ordering::SeqCst);
+        let exec_idx = self.execution_idx.load(Ordering::SeqCst);
+        if val_idx < exec_idx {
             if let Some((txn_idx, incarnation)) = self.next_version_to_validate() {
                 return Some(Task::Validate {
                     version: Version::new(txn_idx, incarnation),
@@ -256,14 +227,23 @@ impl Scheduler {
             self.set_ready_status(txn_idx);
             self.decrease_validation_idx((txn_idx + 1) as usize);
             if self.execution_idx.load(Ordering::SeqCst) > txn_idx as usize {
-                let new_version = self.try_incarnate(txn_idx as TxnIndex);
-                if let Some(new_version) = new_version {
+                // Check if we can re-execute directly. We already set status to ReadyToExecute above.
+                // We need to atomically check and update the status WITHOUT calling try_incarnate
+                // because try_incarnate expects a prior increment which we don't have here.
+                let mut status = self.txn_status[txn_idx as usize].lock().unwrap();
+                if status.1 == ExecutionStatus::ReadyToExecute {
+                    status.1 = ExecutionStatus::Executing;
+                    let incarnation = status.0;
+                    drop(status);  // Release lock
+                    // Return execute task without decrementing - counter "transfers" to new task
                     return Some(Task::Execute {
-                        version: Version::new(new_version.0, new_version.1),
+                        version: Version::new(txn_idx, incarnation),
                     });
                 }
+                // Status is not ReadyToExecute (another thread grabbed it), just decrement and return
             }
         }
+        // Decrement for the validation task that finished
         self.num_active_tasks.fetch_sub(1, Ordering::SeqCst);
         None
     }
