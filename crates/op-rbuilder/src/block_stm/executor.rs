@@ -502,7 +502,8 @@ impl<
                             );
                             let _tx_validate_guard = tx_validate_span.entered();
 
-                            debug!(
+                            info!(
+                                target: "block_stm",
                                 worker_id = worker_id,
                                 txn_idx = txn_idx,
                                 incarnation = incarnation,
@@ -552,6 +553,14 @@ impl<
                         if task.is_none() {
                             // Get next task from Block-STM scheduler
                             task = this.scheduler.next_task();
+                            if let Some(ref t) = task {
+                                info!(
+                                    target: "block_stm",
+                                    worker_id = worker_id,
+                                    task = ?t,
+                                    "Worker received task from scheduler"
+                                );
+                            }
                             if task.is_none() {
                                 if this.scheduler.done() {
                                     info!(
