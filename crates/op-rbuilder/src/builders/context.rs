@@ -747,6 +747,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
         E: Debug + Default + Send,
         DB: Database + DatabaseRef + Send + Sync,
     {
+        // Cap number of threads to avoid excessive contention when there are few transactions.
+        // Using too many threads for a small number of transactions causes excessive conflicts
+        // on shared resources (BlockResourceUsed) that Block-STM cannot fully resolve.
+        // Use at most 2 threads per transaction, with a minimum of 2 and maximum of configured value.
         let num_threads = self.parallel_threads;
         let tx_da_limit = self.da_config.max_da_tx_size();
 
@@ -771,6 +775,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
         if num_candidates == 0 {
             return Ok(None);
         }
+
+        // Cap threads to reduce contention: use at most num_candidates/2 threads (min 2, max configured)
+        let num_threads = num_threads.min((num_candidates / 2).max(2));
 
         // Capture parent span for cross-thread propagation (links to build_flashblock)
         let parent_span = Span::current();
