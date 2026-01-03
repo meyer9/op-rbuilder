@@ -101,12 +101,7 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
         pool: Pool,
         attr: BestTransactionsAttributes,
     ) -> impl PayloadTransactions<Transaction = T> {
-        // TODO: once this issue is fixed we could remove without_updates and rely on regular impl
-        // https://github.com/paradigmxyz/reth/issues/17325
-        BestPayloadTransactions::new(
-            pool.best_transactions_with_attributes(attr)
-                .without_updates(),
-        )
+        BestPayloadTransactions::new(pool.best_transactions_with_attributes(attr))
     }
 }
 
