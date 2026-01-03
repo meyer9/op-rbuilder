@@ -18,7 +18,7 @@ use revm::{
     state::{Account, EvmState},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, warn};
+use tracing::{Span, debug, warn};
 
 use crate::{
     block_stm::{
