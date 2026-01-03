@@ -78,6 +78,28 @@ impl MVHashMap {
         write_set: &WriteSet,
     ) {
         for (key, value) in write_set {
+            // Debug: log nonce writes
+            if let (EvmStateKey::Nonce(_addr), EvmStateValue::Nonce(nonce)) = (key, value) {
+                tracing::trace!(
+                    target: "block_stm_mvhashmap",
+                    txn_idx = txn_idx,
+                    incarnation = incarnation_number,
+                    nonce = nonce,
+                    "apply_write_set: Writing nonce to MVHashMap"
+                );
+            }
+            // Debug: log BlockResourceUsed writes
+            if let (EvmStateKey::BlockResourceUsed(resource_type), EvmStateValue::BlockResourceUsed(val)) = (key, value) {
+                tracing::trace!(
+                    target: "block_stm_mvhashmap",
+                    txn_idx = txn_idx,
+                    incarnation = incarnation_number,
+                    resource_type = ?resource_type,
+                    value = val,
+                    "apply_write_set: Writing BlockResourceUsed to MVHashMap"
+                );
+            }
+
             match self.data.get_mut(key) {
                 Some(version_map) => {
                     version_map.write().insert(
@@ -103,18 +125,24 @@ impl MVHashMap {
         txn_idx: TxnIndex,
         new_locations: HashSet<EvmStateKey>,
     ) -> bool {
-        let mut last_written_locations = self.last_written_locations[txn_idx as usize].write();
-        for location in new_locations.iter() {
+        let last_written_locations_guard = self.last_written_locations[txn_idx as usize].read();
+        let last_written_locations_clone = last_written_locations_guard.clone();
+        drop(last_written_locations_guard);
+
+        // Remove writes from locations that were written in a previous incarnation
+        // but are NOT being written in this incarnation
+        for location in last_written_locations_clone.difference(&new_locations) {
             if let Some(version_map) = self.data.get_mut(location) {
                 version_map.write().remove(&txn_idx);
             }
         }
-        let unwritten_locations = new_locations.difference(&last_written_locations).count();
-        if unwritten_locations == 0 {
-            return false;
-        }
+
+        let unwritten_locations = new_locations.difference(&last_written_locations_clone).count();
+        let wrote_new_location = unwritten_locations > 0;
+
+        let mut last_written_locations = self.last_written_locations[txn_idx as usize].write();
         *last_written_locations = new_locations;
-        true
+        wrote_new_location
     }
 
     pub fn record(&self, version: Version, read_set: &ReadSet, write_set: &WriteSet) -> bool {
@@ -155,6 +183,18 @@ impl MVHashMap {
             return ReadResult::NotFound;
         }
         let highest_read = lower_reads.iter().max_by_key(|(idx, _)| *idx).unwrap();
+
+        // Debug: log what we're reading for Nonce keys
+        if let (txn_idx, MVHashMapValue::Write(_, EvmStateValue::Nonce(nonce))) = *highest_read {
+            tracing::trace!(
+                target: "block_stm_mvhashmap",
+                reader_idx = reader_idx,
+                writer_idx = txn_idx,
+                nonce = nonce,
+                "MVHashMap read: Nonce"
+            );
+        }
+
         match *highest_read {
             (txn_idx, MVHashMapValue::Estimate) => ReadResult::Aborted { txn_idx: *txn_idx },
             (txn_idx, MVHashMapValue::Write(incarnation, value)) => ReadResult::Value {

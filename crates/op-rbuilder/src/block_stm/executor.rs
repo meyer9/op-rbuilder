@@ -18,7 +18,7 @@ use revm::{
     state::{Account, EvmState},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, warn};
+use tracing::{Span, debug, warn};
 
 use crate::{
     block_stm::{
@@ -250,7 +250,27 @@ impl<
                             }
 
                             // Only write nonce if it changed
-                            if original_nonce != Some(&EvmStateValue::Nonce(account.info.nonce)) {
+                            let nonce_changed = original_nonce != Some(&EvmStateValue::Nonce(account.info.nonce));
+                            if let Some(EvmStateValue::Nonce(orig_nonce)) = original_nonce {
+                                tracing::trace!(
+                                    target: "block_stm_executor",
+                                    txn_idx = txn_idx,
+                                    original_nonce = orig_nonce,
+                                    new_nonce = account.info.nonce,
+                                    changed = nonce_changed,
+                                    "Nonce comparison"
+                                );
+                            } else {
+                                tracing::trace!(
+                                    target: "block_stm_executor",
+                                    txn_idx = txn_idx,
+                                    original_nonce = "None",
+                                    new_nonce = account.info.nonce,
+                                    changed = nonce_changed,
+                                    "Nonce comparison (original was None)"
+                                );
+                            }
+                            if nonce_changed {
                                 write_set.insert((
                                     EvmStateKey::Nonce(*addr),
                                     EvmStateValue::Nonce(account.info.nonce),

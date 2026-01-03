@@ -145,10 +145,24 @@ impl<'a, BaseDB> VersionedDatabase<'a, BaseDB> {
                 value: EvmStateValue::BlockResourceUsed(val),
                 version,
             } => {
+                tracing::trace!(
+                    target: "block_stm_db",
+                    txn_idx = self.txn_idx,
+                    resource_type = ?resource_type,
+                    value = val,
+                    writer_txn = version.txn_idx,
+                    "read_block_resource: Value found in MVHashMap"
+                );
                 self.add_to_reads(key, EvmStateValue::BlockResourceUsed(val), Some(version));
                 Ok(val)
             }
             ReadResult::NotFound => {
+                tracing::trace!(
+                    target: "block_stm_db",
+                    txn_idx = self.txn_idx,
+                    resource_type = ?resource_type,
+                    "read_block_resource: NotFound in MVHashMap, returning 0"
+                );
                 // Resource not written yet, defaults to 0
                 self.add_to_reads(key, EvmStateValue::BlockResourceUsed(0), None);
                 Ok(0)
@@ -302,6 +316,27 @@ where
         // Check MVHashMap for nonce
         let nonce_key = EvmStateKey::Nonce(address);
         let nonce_result = self.mv_hashmap.read(&nonce_key, self.txn_idx);
+
+        // Debug: log nonce read result
+        match &nonce_result {
+            crate::block_stm::types::ReadResult::Value { value: crate::block_stm::types::EvmStateValue::Nonce(n), version } => {
+                tracing::trace!(
+                    target: "block_stm_db",
+                    txn_idx = self.txn_idx,
+                    nonce = n,
+                    writer_txn = version.txn_idx,
+                    "basic() read nonce from MVHashMap"
+                );
+            }
+            crate::block_stm::types::ReadResult::NotFound => {
+                tracing::trace!(
+                    target: "block_stm_db",
+                    txn_idx = self.txn_idx,
+                    "basic() nonce not found in MVHashMap, will use base state"
+                );
+            }
+            _ => {}
+        }
 
         // Check MVHashMap for code hash
         let code_hash_key = EvmStateKey::CodeHash(address);

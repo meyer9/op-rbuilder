@@ -752,9 +752,16 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
 
         // Collect candidate transactions from the iterator.
         // Also extract reverted_hashes for bundle revert protection before losing the wrapper type
+        // Limit collection to prevent infinite blocking (similar to sequential path pattern)
+        let max_candidates = (block_gas_limit / 21000).min(10000) as usize;
         let mut candidate_txs = Vec::new();
         let mut tx_reverted_hashes = Vec::new();
+
         while let Some(tx) = best_txs.next(()) {
+            if candidate_txs.len() >= max_candidates {
+                break;
+            }
+
             let reverted_hashes = tx.reverted_hashes();
             tx_reverted_hashes.push(reverted_hashes);
             candidate_txs.push(tx);
