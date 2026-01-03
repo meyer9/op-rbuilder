@@ -750,11 +750,24 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx, OpEvmFactory> {
         let num_threads = self.parallel_threads;
         let tx_da_limit = self.da_config.max_da_tx_size();
 
+        let block_attr = BlockConditionalAttributes {
+            number: self.block_number(),
+            timestamp: self.attributes().timestamp(),
+        };
+
         // Collect candidate transactions from the iterator.
         // Also extract reverted_hashes for bundle revert protection before losing the wrapper type
         let mut candidate_txs = Vec::new();
         let mut tx_reverted_hashes = Vec::new();
         while let Some(tx) = best_txs.next(()) {
+            // Check block conditional attributes
+            if let Some(conditional) = tx.conditional()
+                && !conditional.matches_block_attributes(&block_attr)
+            {
+                best_txs.mark_invalid(tx.sender(), tx.nonce());
+                continue;
+            }
+
             let reverted_hashes = tx.reverted_hashes();
             tx_reverted_hashes.push(reverted_hashes);
             candidate_txs.push(tx);
