@@ -104,7 +104,8 @@ impl MVHashMap {
         new_locations: HashSet<EvmStateKey>,
     ) -> bool {
         let mut last_written_locations = self.last_written_locations[txn_idx as usize].write();
-        for location in new_locations.iter() {
+
+        for location in last_written_locations.difference(&new_locations) {
             if let Some(version_map) = self.data.get_mut(location) {
                 version_map.write().remove(&txn_idx);
             }
