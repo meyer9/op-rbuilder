@@ -25,6 +25,9 @@ pub mod mv_hashmap;
 pub mod scheduler;
 pub mod types;
 
+#[cfg(test)]
+mod parallel_tests;
+
 // Re-export commonly used types
 pub use db_adapter::{SharedCodeCache, VersionedDatabase, VersionedDbError};
 pub use mv_hashmap::{MVHashMap, ValidationResult};
