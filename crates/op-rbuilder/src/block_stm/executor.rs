@@ -488,10 +488,9 @@ impl<
                                 );
                                 let wrote_new_path = this.mv_hashmap.record(version, &read_set, &write_set);
 
-                                let next_task = this
+                                this
                                     .scheduler
-                                    .finish_execution(txn_idx, incarnation, wrote_new_path, guard);
-                                next_task
+                                    .finish_execution(txn_idx, incarnation, wrote_new_path, guard)
                             } else {
                                 None
                             }
