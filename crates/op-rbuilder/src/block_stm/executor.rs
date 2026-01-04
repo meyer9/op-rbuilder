@@ -18,7 +18,7 @@ use revm::{
     state::{Account, EvmState},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, debug, warn};
+use tracing::{Span, debug};
 
 use crate::{
     block_stm::{
@@ -119,7 +119,7 @@ impl<
         version: Version,
         base_fee: u64,
         execute_tx: &Arc<ExecuteTxFn>,
-    ) -> (ReadSet, WriteSet, TxExecutionResult) {
+    ) -> (ReadSet, WriteSet, TxExecutionResult, bool) {
         let Version {
             txn_idx,
             incarnation,
@@ -289,7 +289,7 @@ impl<
                     let success = result.is_success();
 
                     if !success {
-                        warn!(
+                        debug!(
                             target: "block_stm",
                             txn_idx = txn_idx,
                             incarnation = incarnation,
@@ -316,6 +316,7 @@ impl<
                             tx_da_size,
                             miner_fee,
                         },
+                        false,
                     );
                 }
                 Err(EVMError::Database(VersionedDbError::ReadAborted { aborted_txn_idx })) => {
@@ -326,7 +327,7 @@ impl<
                         continue;
                     }
 
-                    warn!(
+                    debug!(
                         target: "block_stm",
                         txn_idx = txn_idx,
                         incarnation = incarnation,
@@ -348,6 +349,7 @@ impl<
                             tx_da_size: 0,
                             miner_fee: 0,
                         },
+                        true,
                     );
                 }
                 Err(err) => {
@@ -357,7 +359,7 @@ impl<
 
                     // We store an error here, but if the transaction is re-executed later, the new result
                     // will overwrite this one.
-                    warn!(
+                    debug!(
                         target: "block_stm",
                         txn_idx = txn_idx,
                         incarnation = incarnation,
@@ -379,6 +381,7 @@ impl<
                             tx_da_size: 0,
                             miner_fee: 0,
                         },
+                        false,
                     );
                 }
             }; // End match
@@ -461,26 +464,37 @@ impl<
                                 "Starting execution task"
                             );
 
-                            let (read_set, write_set, exec_result) = this.execute_single_tx(version, base_fee, &execute_tx);
+                            let (read_set, write_set, exec_result, aborted) = this.execute_single_tx(version, base_fee, &execute_tx);
 
                             {
                                 let mut results = this.execution_results.lock().unwrap();
                                 results[txn_idx as usize] = Some(exec_result);
                             }
 
-                            let wrote_new_path = this.mv_hashmap.record(version, &read_set, &write_set);
 
-                            let next_task = this
-                                .scheduler
-                                .finish_execution(txn_idx, incarnation, wrote_new_path, guard);
                             debug!(
                                 worker_id = worker_id,
                                 txn_idx = txn_idx,
                                 incarnation = incarnation,
-                                wrote_new_path = wrote_new_path,
+                                aborted = aborted,
                                 "Finished execution task"
                             );
-                            next_task
+                            if !aborted {
+                                debug!(
+                                    worker_id = worker_id,
+                                    txn_idx = txn_idx,
+                                    incarnation = incarnation,
+                                    "Finished execution task, committing writes"
+                                );
+                                let wrote_new_path = this.mv_hashmap.record(version, &read_set, &write_set);
+
+                                let next_task = this
+                                    .scheduler
+                                    .finish_execution(txn_idx, incarnation, wrote_new_path, guard);
+                                next_task
+                            } else {
+                                None
+                            }
                         } else {
                             task
                         };
@@ -514,14 +528,13 @@ impl<
                                 && this.scheduler.try_validation_abort(txn_idx, incarnation);
 
                             if aborted {
-                                // Log conflict details at warn level
                                 if let ValidationResult::Conflict {
                                     key,
                                     expected_version,
                                     actual_version,
                                 } = validation_result
                                 {
-                                    warn!(
+                                    debug!(
                                         worker_id = worker_id,
                                         txn_idx = txn_idx,
                                         incarnation = incarnation,
@@ -541,6 +554,10 @@ impl<
                                 incarnation = incarnation,
                                 aborted = aborted,
                                 read_set_valid = read_set_valid,
+                                next_task = next_task.is_some(),
+                                next_task_incarnation = next_task.as_ref().map(|(t, _)| match t {
+                                    Task::Validate { version } | Task::Execute { version } => version.incarnation,
+                                }),
                                 "Finished validation task"
                             );
                             next_task
